@@ -1,0 +1,156 @@
+pipeline {
+    
+    agent {
+        docker {
+            image 'ubuntu:latest'
+            args  '--user root -v /var/run/docker.sock:/var/run/docker.sock' // mount Docker socket to access the host's Docker daemon
+         }
+    }
+    
+    environment {
+        IMAGE_TAG = "${BUILD_NUMBER}"
+    }
+    stages {
+        
+        stage('Setup-Docker'){
+           steps {
+                script{
+                    // docker image docker setup
+                    sh '''
+                        apt-get update -y
+                        apt-get install ca-certificates curl gnupg wget -y
+                        install -m 0755 -d /etc/apt/keyrings
+                        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+                        chmod a+r /etc/apt/keyrings/docker.gpg
+
+                        # Add the repository to Apt sources:
+                        echo \
+                        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+                        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+                        tee /etc/apt/sources.list.d/docker.list > /dev/null
+                        apt-get update -y
+
+                        apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
+                    '''
+                }
+           }
+        }
+        stage('Setup-AWS') {
+            steps {
+                script{
+                    // install aws cli to interact with aws resources
+                    sh '''
+                        cd ..
+                        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                        apt install unzip -y
+                        unzip -o awscliv2.zip
+                        ./aws/install 
+                        aws --version
+                        aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/m3j8h2a6
+                    '''
+                    // private ecr login
+                    //aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 630210676530.dkr.ecr.us-east-1.amazonaws.com
+                }
+            }
+        }
+
+        stage('Docker-Build'){
+            steps{
+                script{
+                    // build the django backend and push to aws ECR
+                    sh '''
+                        echo 'Docker Build'
+                        ls -a
+                        cd python-jenkins-argocd-k8s
+
+                        docker build -t public.ecr.aws/m3j8h2a6/django-bot:v${BUILD_NUMBER} .
+                        docker push public.ecr.aws/m3j8h2a6/django-bot:v${BUILD_NUMBER}
+
+                        echo 'Docker Build Complete ...'
+                    '''
+                    // private ecr
+                    //docker build -t 630210676530.dkr.ecr.us-east-1.amazonaws.com/ai-cicd:v${BUILD_NUMBER} .
+                    //docker push 630210676530.dkr.ecr.us-east-1.amazonaws.com/ai-cicd:v${BUILD_NUMBER}
+                }
+            }
+        }
+
+        stage('Sonar-Scan-Setup'){
+            steps {
+                script{
+                    sh '''
+                        cd ..
+                        wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+                        unzip -o sonar-scanner-cli-5.0.1.3006-linux.zip
+                    '''
+                }
+            }
+        }
+
+        stage('Sonar-Scan'){
+            environment {
+                SONAR_URL = "http://34.192.92.49:9000/"
+            }
+            steps{
+                withCredentials([string(credentialsId: 'sonarqube', variable: 'SONAR_AUTH_TOKEN')]){
+                    sh '''
+                        ls -a
+                        cd python-jenkins-argocd-k8s
+                        export PATH=$PATH:/var/lib/jenkins/workspace/sonar-scanner-5.0.1.3006-linux/bin/
+                        sonar-scanner \
+                        -Dsonar.projectKey=jenkins-cicd \
+                        -Dsonar.sources=. \
+                        -Dsonar.host.url=${SONAR_URL} \
+                        -Dsonar.login=$SONAR_AUTH_TOKEN
+                    '''
+                }
+            }
+        }
+
+        stage('Checkout-Deployment'){
+           steps {
+                sh '''
+                    cd ../
+                    git clone -b prod https://github.com/himasha0421/AI-CICD-Guide.git
+                '''
+           }
+        }
+
+        stage('Update Deployment File'){
+            environment{
+                GIT_REPO_NAME = "AI-CICD-Guide"
+                GIT_USER_NAME = "himasha0421"
+                BUILD_NUMBER = "${BUILD_NUMBER}"
+            }
+            steps{
+                withCredentials([string(credentialsId: 'github' , variable: 'GITHUB_TOKEN')]){
+                    sh '''
+                        cd ..
+                        ls -a
+                        cd AI-CICD-Guide
+                        echo "Before Deployment Update ..."
+                        cat deploy/deploy.yaml
+
+                        sed -i "s/django-bot:v.*/django-bot:v${BUILD_NUMBER}/g" deploy/deploy.yaml
+                        sed -i "s/django-bot:v.*/django-bot:v${BUILD_NUMBER}/g" deploy/pod.yaml
+                        
+                        echo "After Deployment Update ..."
+                        cat deploy/deploy.yaml
+                        
+                        git config --global safe.directory '*'
+                        git add deploy/deploy.yaml
+                        git add deploy/pod.yaml
+
+                        git config --global user.email "himasha0421@gmail.com"
+                        git config --global user.name "himasha0421"
+
+                        git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+
+                        git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:prod
+                    '''
+                }
+            }
+        }
+
+    }
+}
