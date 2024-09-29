@@ -1,4 +1,5 @@
 # Continuous Integration (CI) Pipeline
+
 ![](https://i.imgur.com/waxVImv.png)
 
 # Roadmaps are now interactive, you can click the nodes to read more about the topics.
@@ -8,6 +9,7 @@
 ![](https://i.imgur.com/waxVImv.png)
 
 **Pipeline Architecture**
+
 ![](tmp/architecture.png)
 
 ## Setup Jenkins inside EC2 instance
