@@ -209,7 +209,6 @@ I'm are always open to your feedback.  Please contact as bellow information:
 * [Email Address](luongutnho@hotmail.com)
 
 ![](https://i.imgur.com/waxVImv.png)
-![](bitfield.png)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/nholuong)
 
 # License
